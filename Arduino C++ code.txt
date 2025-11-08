@@ -1,0 +1,83 @@
+#include <SoftwareSerial.h>
+#include "VoiceRecognitionV3.h"
+
+// HC-05 Bluetooth module on SoftwareSerial pins 10 (RX) and 11 (TX)
+SoftwareSerial BTSerial(10, 11); // RX=10, TX=11
+
+// Voice Recognition V3 module on SoftwareSerial pins 2 (RX) and 3 (TX)
+VR myVR(2, 3);
+
+// Debounce variables
+unsigned long lastTime = 0;
+const unsigned long debounceMs = 1000; // ignore same command within 1s
+String lastCommand = "";
+
+void setup() {
+  Serial.begin(9600);
+  BTSerial.begin(9600);
+  myVR.begin(9600);
+
+  Serial.println("Connected to HC-05 and Voice Recognition Module.");
+  Serial.println("Loading trained commands...");
+
+  // Load trained slots
+  uint8_t records_next[] = {0,1,2,3,4,5};       // NEXT (6 slots)
+  uint8_t records_back[] = {20,21,22,23,24,25}; // BACK (6 slots)
+
+  myVR.load(records_next, 6);
+  myVR.load(records_back, 6);
+
+  Serial.println("Ready. Waiting for a voice command...");
+}
+
+void loop() {
+  uint8_t buf[50];
+  int ret = myVR.recognize(buf, 50);
+
+  if (ret > 0) {
+    uint8_t sigLen = buf[3];
+    String signature = "";
+
+    // Extract signature string from buffer
+    for (int i = 0; i < sigLen; i++) {
+      signature += (char)buf[4 + i];
+    }
+    signature.trim();
+    signature.toLowerCase();
+
+    // Debug: show exactly what VR module returned
+    Serial.print("Raw signature: '");
+    Serial.print(signature);
+    Serial.println("'");
+
+    // Map signature to canonical command
+    String commandText = "unknown";
+    if (signature == "next") {
+      commandText = "next";
+    }
+    else if (signature == "back" || signature == "bak" || signature == "bck") {
+      // Normalize common mis-hearings of "back"
+      commandText = "back";
+    }
+
+    // Debounce
+    unsigned long now = millis();
+    if (commandText == lastCommand && (now - lastTime) < debounceMs) {
+      Serial.println("Ignored duplicate command.");
+    } else {
+      lastCommand = commandText;
+      lastTime = now;
+
+      Serial.print("Mapped Command: ");
+      Serial.println(commandText);
+
+      // Send framed command over Bluetooth
+      if (commandText != "unknown") {
+        BTSerial.print("<");
+        BTSerial.print(commandText);
+        BTSerial.print(">"); // no println, avoids \r\n
+        BTSerial.flush();
+      }
+    }
+  }
+}
